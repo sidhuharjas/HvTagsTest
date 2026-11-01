@@ -12,9 +12,15 @@ import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
 
 import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.ExposureControl;
 import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.GainControl;
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.vision.VisionPortal;
 import org.firstinspires.ftc.vision.apriltag.AprilTagClusterDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagClusterMemberMetadata;
+import org.firstinspires.ftc.vision.apriltag.AprilTagClusterMetadata;
 import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagGameDatabase;
+import org.firstinspires.ftc.vision.apriltag.AprilTagLibrary;
+import org.firstinspires.ftc.vision.apriltag.AprilTagMetadata;
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
 import org.firstinspires.ftc.vision.apriltag.AprilTagSingleDetection;
 
@@ -185,6 +191,9 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
         }
 
         latestDetections = fetchDetections();
+        if (frameGrabber != null) {
+            frameGrabber.setDetections(latestDetections); // the Live view boxes every tag
+        }
         latestState = buildStateJson();
 
         telemetry.addData("cam", camStateText());
@@ -302,11 +311,54 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
      */
     protected AprilTagProcessor createProcessor() {
         return new AprilTagProcessor.Builder()
+                .setTagLibrary(perTagLibrary())
                 .setDrawAxes(false)
                 .setDrawCubeProjection(false)
                 .setDrawTagOutline(false)
                 .setDrawTagID(false)
                 .build();
+    }
+
+    /**
+     * The tag library the webcam detector runs with: every tag on the field as a tag of its own.
+     *
+     * <p>SDK 12 folds the four tags of a BIOBUZZ hive cell into one
+     * {@link AprilTagClusterDetection}. That detection has a pose for the cell as a whole and no
+     * corners at all, so the dashboard could only ever show one row for four tags in view, and
+     * the picture had nothing to draw a box around. Registering each cluster member as a plain
+     * tag makes the detector report every tag separately, each with its own corners and pose.
+     *
+     * <p>If this SDK's cluster metadata cannot be read, the game library is used unchanged: the
+     * camera still finds the cells, it just reports them whole instead of tag by tag.
+     */
+    static AprilTagLibrary perTagLibrary() {
+        AprilTagLibrary gameLibrary = AprilTagGameDatabase.getCurrentGameTagLibrary();
+        AprilTagLibrary.Builder builder = new AprilTagLibrary.Builder().setAllowOverwrite(true);
+        builder.addTags(gameLibrary);
+        try {
+            Field members = AprilTagClusterMetadata.class.getDeclaredField("clusterMembers");
+            members.setAccessible(true);
+            for (AprilTagClusterMetadata cluster : gameLibrary.getAllClusters()) {
+                Object list = members.get(cluster);
+                if (!(list instanceof java.util.List)) {
+                    continue;
+                }
+                int index = 0;
+                for (Object member : (java.util.List<?>) list) {
+                    AprilTagClusterMemberMetadata tag = (AprilTagClusterMemberMetadata) member;
+                    index++;
+                    // The name leads with RED or BLUE, which is the letter the alliance rule
+                    // reads; the size is the one that tag really has, so its range is right.
+                    builder.addTag(new AprilTagMetadata(tag.id, cluster.name + " " + index,
+                            tag.tagsize, DistanceUnit.INCH));
+                }
+            }
+        } catch (Throwable e) {
+            // Fall back to exactly what the SDK ships rather than to tags without a pose.
+            builder = new AprilTagLibrary.Builder();
+            builder.addLibrary(gameLibrary);
+        }
+        return builder.build();
     }
 
     protected void rebuildPortal() {

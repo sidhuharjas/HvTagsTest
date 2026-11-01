@@ -12,7 +12,7 @@ Have both cameras? Start with the Limelight.
 
 ## What you get
 
-- Single tags and AprilTag clusters with range, bearing, elevation and roll
+- Every tag in view reported on its own, with range, bearing, elevation and roll - a hive cell's four tags are four rows, not one
 - The best scorable target highlighted, using the alliance and roll rules from the [FTC AprilTag Clusters tech tip](https://ftc-docs.firstinspires.org/en/latest/tech_tips/tech-tips/tech-tip-apriltag-clusters/tech-tip-apriltag-clusters.html)
 - A tuning dashboard on port 8080 with the camera's live view on the same page: change a slider, watch the result, nothing redeployed
 - **Push tag size to the Limelight**: writes your tag size into the camera's own pipeline over its REST API
@@ -82,7 +82,7 @@ Print a tag or hold a phone screen with one up to the lens. Detection runs in `w
 
 The page polls 4 times a second. If a row looks stale, the footer of the page shows the loop time and detection count.
 
-The **Live view** card is the webcam itself, served as MJPEG by the OpMode on the dashboard's own port (`/stream.mjpg`), so it works over the robot's wifi and through `adb reverse` alike. It encodes at most ~15 frames a second, and only while a page is watching. In Limelight mode the card is hidden - that camera has its own preview and settings page on :5801.
+The **Live view** card is the webcam itself, served as MJPEG by the OpMode on the dashboard's own port (`/stream.mjpg`), so it works over the robot's wifi and through `adb reverse` alike. Each detected tag is boxed and labelled with its id and range right on the picture. It encodes at most ~15 frames a second, and only while a page is watching. In Limelight mode the card is hidden - that camera has its own preview and settings page on :5801.
 
 ## Tests
 
@@ -91,7 +91,7 @@ cd FtcRobotController
 .\gradlew.bat :TeamCode:testDebugUnitTest
 ```
 
-54 tests, no robot needed: config clamping and the JSON round trip, the dashboard's HTTP server and live view stream, both camera sources driven through SimLoop with fake hardware, and the tag-size patcher against realistic pipeline files.
+56 tests, no robot needed: config clamping and the JSON round trip, the dashboard's HTTP server and live view stream, both camera sources driven through SimLoop with fake hardware, the tag library that keeps every tag of a hive cell separate, and the tag-size patcher against realistic pipeline files.
 
 ## Project layout
 
