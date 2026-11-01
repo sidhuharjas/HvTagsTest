@@ -201,7 +201,7 @@ class AprilTagConfigTest {
         config.resetToDefaults();
         assertEquals(AprilTagConfig.MODE_WEBCAM, config.cameraMode);
         assertEquals("limelight", config.limelightName);
-        assertEquals(20, config.limelightPollHz);
+        assertEquals(100, config.limelightPollHz);
         assertEquals("", config.limelightHost, "reset goes back to asking the device");
     }
 

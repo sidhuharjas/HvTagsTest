@@ -54,6 +54,9 @@ public class AprilTagDashboardServer {
     private volatile byte[] latestJpeg;
     private volatile long latestJpegSeq;
     private volatile long latestJpegAtMs;
+    /** Guards the frame above and wakes a waiting viewer the instant a new one is published,
+     *  so a frame goes out when the camera makes it instead of on the next poll tick. */
+    private final Object frameLock = new Object();
     /** Last time the page asked for video; keeps the first frame coming after a 503 retry. */
     private volatile long lastStreamRequestMs;
     /** Each viewer holds a thread and a socket, so cap them. */
@@ -113,9 +116,12 @@ public class AprilTagDashboardServer {
         if (jpeg == null || jpeg.length == 0) {
             return;
         }
-        latestJpeg = jpeg;
-        latestJpegAtMs = System.currentTimeMillis();
-        latestJpegSeq++;
+        synchronized (frameLock) {
+            latestJpeg = jpeg;
+            latestJpegAtMs = System.currentTimeMillis();
+            latestJpegSeq++;
+            frameLock.notifyAll();
+        }
     }
 
     /** Binds the first free port, so a Control Hub - where the RC app already owns 8080 - still
@@ -235,20 +241,30 @@ public class AprilTagDashboardServer {
             out.flush();
             long sent = -1;
             while (running) {
-                if (System.currentTimeMillis() - latestJpegAtMs > 5000) {
-                    break; // the camera stopped; ending the response lets the page reconnect
+                byte[] jpeg;
+                long seq;
+                synchronized (frameLock) {
+                    long ageMs = System.currentTimeMillis() - latestJpegAtMs;
+                    if (ageMs > 5000) {
+                        break; // the camera stopped; ending the response lets the page reconnect
+                    }
+                    if (latestJpegSeq == sent) {
+                        // Nothing new: park until publishFrame wakes us, re-reading the cutoff.
+                        frameLock.wait(Math.max(1, Math.min(500, 5000 - ageMs)));
+                        continue;
+                    }
+                    seq = latestJpegSeq;
+                    jpeg = latestJpeg;
                 }
-                long seq = latestJpegSeq;
-                byte[] jpeg = latestJpeg;
-                if (jpeg != null && seq != sent) {
-                    out.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
-                            + jpeg.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
-                    out.write(jpeg);
-                    out.write(new byte[]{'\r', '\n'});
-                    out.flush();
-                    sent = seq;
+                if (jpeg == null) {
+                    break;
                 }
-                Thread.sleep(15);
+                out.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                        + jpeg.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                out.write(jpeg);
+                out.write(new byte[]{'\r', '\n'});
+                out.flush();
+                sent = seq;
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -476,8 +492,8 @@ public class AprilTagDashboardServer {
             "<input type=\"text\" id=\"limelightName\" size=\"12\"></div>",
             "<div class=\"row\"><label>host</label>",
             "<input type=\"text\" id=\"limelightHost\" size=\"16\" placeholder=\"auto (limelight.local)\"></div>",
-            "<div class=\"row\"><label>poll rate <span class=\"val\" id=\"llHzVal\">20</span> Hz</label>",
-            "<input type=\"range\" id=\"limelightPollHz\" min=\"1\" max=\"120\" step=\"1\" value=\"20\"></div>",
+            "<div class=\"row\"><label>poll rate <span class=\"val\" id=\"llHzVal\">100</span> Hz</label>",
+            "<input type=\"range\" id=\"limelightPollHz\" min=\"1\" max=\"120\" step=\"1\" value=\"100\"></div>",
             "<div class=\"row\"><label>active pipeline</label><span class=\"val\" id=\"llDev\">-</span></div>",
             "<div class=\"row\"><button class=\"btn\" id=\"llPush\">push tag size &rarr; Limelight</button></div>",
             "<div class=\"hint\" id=\"llSync\">nothing pushed yet</div>",
@@ -599,7 +615,7 @@ public class AprilTagDashboardServer {
             "$('resetBtn').addEventListener('click',()=>post({cameraName:'Webcam 1',resolution:0,decimation:1,exposureUs:-1,",
              " gain:-1,tagSizeIn:5,fovDeg:65,alliance:'RED',maxRollDeg:90,minClusterPercent:0,minDecisionMargin:0,poseSolver:'OPENCV_ITERATIVE',",
              " showUnscorable:true,liveView:false,cameraMode:'WEBCAM',limelightName:'limelight',",
-             " limelightHost:'',limelightPollHz:20,tagNames:'{}'}));",
+             " limelightHost:'',limelightPollHz:100,tagNames:'{}'}));",
             "$('copyBtn').addEventListener('click',()=>{navigator.clipboard&&navigator.clipboard.writeText($('raw').value);});",
             "function setUnfocused(el,fn){if(el&&document.activeElement!==el)fn(el);}",
             "function sync(cfg){if(!cfg)return;",
@@ -689,7 +705,8 @@ public class AprilTagDashboardServer {
             "  requestAnimationFrame(animate);}",
             " animate();}",
             "initHoneycomb();",
-            "setInterval(poll,250);poll();",
+            // 10 Hz: the page is a readout of the loop, so it should not be the slowest part.
+            "setInterval(poll,100);poll();",
             "</script></body></html>"
     });
 

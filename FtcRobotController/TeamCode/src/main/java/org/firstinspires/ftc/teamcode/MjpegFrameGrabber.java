@@ -23,7 +23,8 @@ import java.util.Locale;
  *
  * <p>It runs on the camera thread beside the AprilTag processor, so it does nothing at all until
  * a browser is watching ({@link AprilTagDashboardServer#wantsFrames()}) and caps itself at about
- * 15 encoded frames a second. The encoding is deliberately downscaled in quality, not resolution:
+ * 30 encoded frames a second - the camera's own rate, so the picture is not held back by the
+ * encoding. The encoding is deliberately downscaled in quality, not resolution:
  * a 640x480 frame at 70 is a few tens of kB, which is what a pit laptop on the robot's wifi can
  * hold while the JSON polling continues.
  *
@@ -33,8 +34,8 @@ import java.util.Locale;
  */
 public class MjpegFrameGrabber implements VisionProcessor {
 
-    /** ~15 fps. The dashboard is a tuning view; the Driver Station live view is the smooth one. */
-    private static final long MIN_ENCODE_INTERVAL_NS = 66_000_000L;
+    /** ~30 fps: match the camera rather than add a second of buffering to what you see. */
+    private static final long MIN_ENCODE_INTERVAL_NS = 33_000_000L;
     private static final int JPEG_QUALITY = 70;
     /** BGR: the frame being encoded is BGR, not RGB. */
     private static final Scalar TAG_COLOR = new Scalar(0, 255, 0);

@@ -34,8 +34,9 @@ public class AprilTagConfig {
     public volatile String cameraMode = MODE_WEBCAM;
     /** HardwareMap device name of the Limelight (FTC Driver Station configuration). */
     public volatile String limelightName = "limelight";
-    /** How often the OpMode asks the Limelight for a result, 1..120 Hz. */
-    public volatile int limelightPollHz = 20;
+    /** How often the OpMode asks the Limelight for a result, 1..120 Hz. 100 Hz is the rate the
+     *  Limelight's own examples use, and it keeps the result in hand ~40 ms fresher than 20 Hz. */
+    public volatile int limelightPollHz = 100;
     /** Hostname or IP to reach the Limelight with when the device does not report one that
      *  works - a renamed camera is no longer at limelight.local. Empty means "ask the device",
      *  which is what the SDK itself does. */

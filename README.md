@@ -80,9 +80,9 @@ Print a tag or hold a phone screen with one up to the lens. Detection runs in `w
 | Limelight | Device name, host, poll rate, active pipeline, link to the camera's own page on port 5801, push tag size |
 | hive | Baseline pitch and tip threshold for the hive-cell check |
 
-The page polls 4 times a second. If a row looks stale, the footer of the page shows the loop time and detection count.
+The page polls 10 times a second. If a row looks stale, the footer of the page shows the loop time and detection count.
 
-The **Live view** card is the webcam itself, served as MJPEG by the OpMode on the dashboard's own port (`/stream.mjpg`), so it works over the robot's wifi and through `adb reverse` alike. Each detected tag is boxed and labelled with its id and range right on the picture. It encodes at most ~15 frames a second, and only while a page is watching. In Limelight mode the card is hidden - that camera has its own preview and settings page on :5801.
+The **Live view** card is the webcam itself, served as MJPEG by the OpMode on the dashboard's own port (`/stream.mjpg`), so it works over the robot's wifi and through `adb reverse` alike. Each detected tag is boxed and labelled with its id and range right on the picture. It encodes at most ~30 frames a second, and only while a page is watching. In Limelight mode the card is hidden - that camera has its own preview and settings page on :5801.
 
 ## Tests
 
