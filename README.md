@@ -14,7 +14,7 @@ Have both cameras? Start with the Limelight.
 
 - Single tags and AprilTag clusters with range, bearing, elevation and roll
 - The best scorable target highlighted, using the alliance and roll rules from the [FTC AprilTag Clusters tech tip](https://ftc-docs.firstinspires.org/en/latest/tech_tips/tech-tips/tech-tip-apriltag-clusters/tech-tip-apriltag-clusters.html)
-- A tuning dashboard on port 8080: change a slider, watch the result, nothing redeployed
+- A tuning dashboard on port 8080 with the camera's live view on the same page: change a slider, watch the result, nothing redeployed
 - **Push tag size to the Limelight**: writes your tag size into the camera's own pipeline over its REST API
 - A smoke-test OpMode that prints detections to telemetry and nothing else
 
@@ -74,13 +74,15 @@ Print a tag or hold a phone screen with one up to the lens. Detection runs in `w
 | Group | What it does |
 |---|---|
 | source | Switch between the USB webcam and the Limelight while the OpMode runs |
-| camera | Webcam resolution, exposure, gain, camera name, Driver Station live view |
+| camera | Live view, webcam resolution, exposure, gain, camera name, Driver Station live view |
 | detector | Webcam decimation and pose solver. Hidden in Limelight mode, where the camera owns its own pipeline |
 | targeting | Alliance, roll limit, minimum cluster percent, minimum decision margin |
 | Limelight | Device name, host, poll rate, active pipeline, link to the camera's own page on port 5801, push tag size |
 | hive | Baseline pitch and tip threshold for the hive-cell check |
 
 The page polls 4 times a second. If a row looks stale, the footer of the page shows the loop time and detection count.
+
+The **Live view** card is the webcam itself, served as MJPEG by the OpMode on the dashboard's own port (`/stream.mjpg`), so it works over the robot's wifi and through `adb reverse` alike. It encodes at most ~15 frames a second, and only while a page is watching. In Limelight mode the card is hidden - that camera has its own preview and settings page on :5801.
 
 ## Tests
 
@@ -89,18 +91,18 @@ cd FtcRobotController
 .\gradlew.bat :TeamCode:testDebugUnitTest
 ```
 
-47 tests, no robot needed: config clamping and the JSON round trip, the dashboard's HTTP server, both camera sources driven through SimLoop with fake hardware, and the tag-size patcher against realistic pipeline files.
+54 tests, no robot needed: config clamping and the JSON round trip, the dashboard's HTTP server and live view stream, both camera sources driven through SimLoop with fake hardware, and the tag-size patcher against realistic pipeline files.
 
 ## Project layout
 
 | Path | What it is |
 |---|---|
-| `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/` | The detection code, no FTC SDK imports, the copy the desktop simulator compiles |
+| `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/` | The detection code; the desktop simulator compiles the SDK-free files (`MjpegFrameGrabber` needs the SDK's camera stack and is skipped there) |
 | `FtcRobotController/` | The FTC SDK 12 project: the same sources under `TeamCode/`, plus the tests |
 | `desktop-sim/` | Dashboard host for a PC, plus `webcam_tags.py` (OpenCV detector that feeds it) |
 | `desktop-sim/run-sim.ps1` | Compiles the sim and starts it |
 
-To use it in your own robot project, copy the six `.java` files from either `TeamCode/` folder into `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/`. They only depend on the FTC SDK.
+To use it in your own robot project, copy the seven `.java` files from either `TeamCode/` folder into `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/`. They only depend on the FTC SDK.
 
 ## Ports
 
@@ -108,7 +110,7 @@ To use it in your own robot project, copy the six `.java` files from either `Tea
 |---|---|
 | 8080, then 8082-8089 | The dashboard. It takes the first free port, so a Control Hub ends up on 8082 or later |
 | 8081 | Detections posted by `webcam_tags.py` |
-| 8090 | MJPEG preview from the simulator's webcam script |
+| 8090 | MJPEG preview from the simulator's webcam script (the robot has no extra port: its live view is `/stream.mjpg` on the dashboard's port) |
 | 5801 | The Limelight's own web page, linked from the dashboard |
 | 5807 | The Limelight's REST API, used by push tag size |
 
@@ -120,6 +122,7 @@ Only one process can own a port, so stop the desktop simulator before running th
 - **`no scorable target`** - the target card says why: it names the closest tag and the rule that rejected it (alliance, roll, cluster %, decision margin). Set `alliance` to `ANY` to see everything.
 - **`BindException: Address already in use`** - every port the dashboard tries is busy. On a Control Hub 8080 is OnBot Java and that is expected, so the OpMode simply takes 8082; trust the telemetry line for the real URL. If it reports that no port was free, close whatever holds 8080-8089.
 - **`camera 'Webcam 1' not found`** - the Driver Station camera name is different. Type the right name on the dashboard.
+- **Live view says `camera stream not ready yet - retrying`** - the camera is not streaming yet; check the `cam` chip (`STARTING`, `CLOSED`). The page retries every 5 seconds and starts showing video once frames arrive. In Limelight mode there is no video here by design - use the Limelight's own page.
 - **The OpMode stopped the moment a tag came into view** - an old bug: a detection the SDK could not localise carries no pose, and the state builder read it anyway. A poseless tag is now served with `"hasPose":false` and shows `no pose` in the Detections table. Update `AprilTagDashboardOpMode.java` if you still see it.
 - **The OpMode ends on its own, whatever the cause** - as of this version a loop exception cannot end the run: the OpMode keeps ticking and the `OpMode error` card at the top of the page prints the exception. Paste that text into an issue.
 - **Limelight shows nothing** - check the device name matches the Driver Station, and that the Limelight is on a pipeline with tags (`pipe_fiducial`). The dashboard prints the pipeline it is actually running.

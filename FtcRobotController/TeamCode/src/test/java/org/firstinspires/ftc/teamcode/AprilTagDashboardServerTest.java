@@ -11,9 +11,11 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -212,6 +214,70 @@ class AprilTagDashboardServerTest {
         assertTrue(code == 400 || code == 200, "got " + code);
         // The server must still be serving after a bad body.
         assertTrue(get("/api/state").length() > 0);
+    }
+
+    /** Reads up to the blank line that ends a set of HTTP / MJPEG part headers. */
+    private static String readHeaders(InputStream in) throws IOException {
+        StringBuilder sb = new StringBuilder(256);
+        int c;
+        while ((c = in.read()) != -1) {
+            sb.append((char) c);
+            if (sb.length() >= 4 && sb.indexOf("\r\n\r\n", sb.length() - 4) >= 0) {
+                break;
+            }
+        }
+        return sb.toString();
+    }
+
+    private static byte[] readExact(InputStream in, int len) throws IOException {
+        byte[] out = new byte[len];
+        int off = 0;
+        while (off < len) {
+            int n = in.read(out, off, len - off);
+            if (n < 0) {
+                break;
+            }
+            off += n;
+        }
+        return java.util.Arrays.copyOf(out, off);
+    }
+
+    @Test
+    void liveViewSaysThereAreNoFramesYet() throws IOException {
+        HttpURLConnection conn = connect("GET", "/stream.mjpg");
+        int code = conn.getResponseCode();
+        conn.disconnect();
+
+        assertEquals(503, code,
+                "before the camera sends a frame the page must be told to retry, not hung");
+        assertTrue(server.wantsFrames(),
+                "that retry must wake the encoder, or the first frame is never taken");
+    }
+
+    @Test
+    void liveViewServesTheNewestFrameAsMjpeg() throws IOException {
+        // Not a real JPEG on purpose: the endpoint must hand through exactly what it is given.
+        byte[] jpeg = {(byte) 0xFF, (byte) 0xD8, 1, 2, 3, (byte) 0xFF, (byte) 0xD9};
+        server.publishFrame(jpeg);
+
+        try (Socket socket = new Socket("127.0.0.1", AprilTagDashboardServer.PORT)) {
+            socket.setSoTimeout(3000);
+            OutputStream out = socket.getOutputStream();
+            out.write("GET /stream.mjpg HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            InputStream in = socket.getInputStream();
+
+            String response = readHeaders(in);
+            assertTrue(response.startsWith("HTTP/1.1 200 OK"), response);
+            assertTrue(response.contains("multipart/x-mixed-replace"), response);
+
+            String part = readHeaders(in);
+            assertTrue(part.contains("Content-Type: image/jpeg"), part);
+            assertTrue(part.contains("Content-Length: " + jpeg.length), part);
+            assertArrayEquals(jpeg, readExact(in, jpeg.length),
+                    "the frame the OpMode published is the one the browser receives");
+        }
     }
 
     @Test

@@ -50,6 +50,17 @@ public class AprilTagDashboardServer {
     private final ExecutorService pool;
     private volatile boolean running = true;
 
+    /** Newest webcam frame as JPEG, published by the OpMode's frame grabber. */
+    private volatile byte[] latestJpeg;
+    private volatile long latestJpegSeq;
+    private volatile long latestJpegAtMs;
+    /** Last time the page asked for video; keeps the first frame coming after a 503 retry. */
+    private volatile long lastStreamRequestMs;
+    /** Each viewer holds a thread and a socket, so cap them. */
+    private final java.util.concurrent.atomic.AtomicInteger streamViewers =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final int MAX_STREAM_VIEWERS = 4;
+
     public AprilTagDashboardServer(Backend backend) throws IOException {
         this.backend = backend;
         this.serverSocket = bind();
@@ -80,6 +91,31 @@ public class AprilTagDashboardServer {
     /** The port the dashboard actually ended up on; not {@link #PORT} when 8080 was busy. */
     public int port() {
         return port;
+    }
+
+    /**
+     * True while a browser is watching, so encoding can be skipped otherwise.
+     *
+     * <p>A viewer only exists after the first frame, so a recent request counts too: without
+     * that, the page's 503 retry would never be answered - nothing would ever encode the frame
+     * that turns the retry into a stream.
+     */
+    public boolean wantsFrames() {
+        return streamViewers.get() > 0
+                || System.currentTimeMillis() - lastStreamRequestMs < 10_000;
+    }
+
+    /**
+     * Publishes the newest webcam frame for {@code GET /stream.mjpg}. Called from the camera
+     * thread, once per encoded frame, only while {@link #wantsFrames()} says a page is watching.
+     */
+    public void publishFrame(byte[] jpeg) {
+        if (jpeg == null || jpeg.length == 0) {
+            return;
+        }
+        latestJpeg = jpeg;
+        latestJpegAtMs = System.currentTimeMillis();
+        latestJpegSeq++;
     }
 
     /** Binds the first free port, so a Control Hub - where the RC app already owns 8080 - still
@@ -130,6 +166,11 @@ public class AprilTagDashboardServer {
             }
             String body = contentLength > 0 ? readBody(in, contentLength) : "";
 
+            if ("GET".equals(method) && "/stream.mjpg".equals(path)) {
+                serveStream(out); // long-lived: no Content-Length, the connection frames it
+                return;
+            }
+
             int code;
             String contentType;
             byte[] bytes;
@@ -163,6 +204,68 @@ public class AprilTagDashboardServer {
         } catch (Exception ignored) {
             // one bad client must not kill the server
         }
+    }
+
+    /**
+     * The webcam as MJPEG, from the dashboard's own port: the page can be opened over wifi or
+     * through {@code adb reverse}, and the video comes from the same place as the JSON.
+     *
+     * <p>503 means no frame yet (the camera is still starting), so the page retries; once frames
+     * flow this connection stays open and each new JPEG replaces the last. A browser that goes
+     * away shows up as an IOException on write, and a camera that stops for 5 s closes the
+     * stream so the page reconnects when it comes back.
+     */
+    private void serveStream(OutputStream out) throws IOException {
+        lastStreamRequestMs = System.currentTimeMillis();
+        if (latestJpeg == null || System.currentTimeMillis() - latestJpegAtMs > 3000) {
+            writeText(out, 503, "no camera frames yet");
+            return;
+        }
+        if (streamViewers.incrementAndGet() > MAX_STREAM_VIEWERS) {
+            streamViewers.decrementAndGet();
+            writeText(out, 503, "too many live view connections");
+            return;
+        }
+        try {
+            out.write(("HTTP/1.1 200 OK\r\n"
+                    + "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+                    + "Cache-Control: no-store, no-cache, must-revalidate\r\n"
+                    + "Pragma: no-cache\r\n"
+                    + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            long sent = -1;
+            while (running) {
+                if (System.currentTimeMillis() - latestJpegAtMs > 5000) {
+                    break; // the camera stopped; ending the response lets the page reconnect
+                }
+                long seq = latestJpegSeq;
+                byte[] jpeg = latestJpeg;
+                if (jpeg != null && seq != sent) {
+                    out.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                            + jpeg.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                    out.write(jpeg);
+                    out.write(new byte[]{'\r', '\n'});
+                    out.flush();
+                    sent = seq;
+                }
+                Thread.sleep(15);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            streamViewers.decrementAndGet();
+        }
+    }
+
+    private static void writeText(OutputStream out, int code, String text) throws IOException {
+        byte[] body = text.getBytes(StandardCharsets.UTF_8);
+        out.write(("HTTP/1.1 " + code + " Service Unavailable\r\n"
+                + "Content-Type: text/plain; charset=utf-8\r\n"
+                + "Content-Length: " + body.length + "\r\n"
+                + "Cache-Control: no-store\r\n"
+                + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+        out.write(body);
+        out.flush();
     }
 
     public void close() {
@@ -343,11 +446,9 @@ public class AprilTagDashboardServer {
             "<div class=\"dist\" id=\"tDist\"></div></div></div>",
 
             "<div class=\"card\"><h2>Live view</h2>",
-            "<img id=\"camStream\" src=\"http://localhost:8090/stream.mjpg\" alt=\"camera stream\"",
-            " style=\"width:100%;border-radius:8px;background:var(--bg-soft2);min-height:160px;object-fit:contain;display:block\"",
-            " onerror=\"this.style.display='none';document.getElementById('camStreamOff').hidden=false\">",
-            "<div id=\"camStreamOff\" class=\"hint\" hidden>no video on :8090 - start webcam_tags.py (desktop sim)",
-            " or use the Driver Station live view (robot).</div></div>",
+            "<img id=\"camStream\" alt=\"camera stream\"",
+            " style=\"width:100%;border-radius:8px;background:var(--bg-soft2);min-height:160px;object-fit:contain;display:none\">",
+            "<div id=\"camStreamOff\" class=\"hint\">waiting for the camera stream...</div></div>",
 
             "<div class=\"card\"><h2>Detections</h2><div class=\"tscroll\"><table class=\"dtable\"><thead><tr>",
             "<th>target</th><th>type</th><th style=\"text-align:right\">distance</th>",
@@ -438,6 +539,23 @@ public class AprilTagDashboardServer {
             "const post=p=>fetch('/api/config',{method:'POST',body:JSON.stringify(p)}).catch(()=>{});",
             "const fmt=(v,d=1)=>v==null?'-':Number(v).toFixed(d);",
             "const esc=s=>String(s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));",
+            // The video comes from the same server as this page: /stream.mjpg on the robot,
+            // the Python preview on the desktop sim. Only touch src when the URL changes, or
+            // the MJPEG connection would restart on every poll.
+            "let streamUrl=null,streamRetry=null;",
+            "function setStream(url){const img=$('camStream'),off=$('camStreamOff');",
+            " if(url===streamUrl)return;streamUrl=url;",
+            " if(streamRetry){clearTimeout(streamRetry);streamRetry=null;}",
+            " if(!url){img.style.display='none';img.removeAttribute('src');off.hidden=false;",
+            "  off.textContent='no live camera stream for this source';return;}",
+            " off.hidden=true;img.style.display='block';img.src=url;}",
+            "$('camStream').addEventListener('error',()=>{const img=$('camStream'),off=$('camStreamOff');",
+            " img.style.display='none';img.removeAttribute('src');off.hidden=false;",
+            " off.textContent='camera stream not ready yet - retrying...';",
+            " if(streamRetry)clearTimeout(streamRetry);",
+            " streamRetry=setTimeout(()=>{streamRetry=null;const u=streamUrl;streamUrl=null;setStream(u);},5000);});",
+            "$('camStream').addEventListener('load',()=>{$('camStreamOff').hidden=true;",
+            " $('camStream').style.display='block';});",
             "function wireRange(id,key,label,dec){const el=$(id),lab=$(label);",
             " el.addEventListener('change',()=>{lab.textContent=fmt(el.value,dec);post({[key]:parseFloat(el.value)});});}",
             "wireRange('decimation','decimation','decVal',1);",
@@ -524,7 +642,8 @@ public class AprilTagDashboardServer {
              " window.__llHost=(s.config&&s.config.limelightHost)||'';window.__llIp=s.llIp||null;$('llUi').href=llHref(window.__llIp);",
              " if(s.llPipe)$('llDev').textContent=s.llPipe;",
              " if(s.llSync&&s.llSync!==window.__llSync){window.__llSync=s.llSync;$('llSync').textContent=s.llSync;}",
-            " $('loop').textContent=fmt(s.loopMs,1)+' ms';$('count').textContent=(s.detections||[]).length;",
+             " $('loop').textContent=fmt(s.loopMs,1)+' ms';$('count').textContent=(s.detections||[]).length;",
+             " setStream(s.streamUrl||'');",
             " if(s.error){$('err').textContent=s.error;$('errCard').hidden=false;}else{$('errCard').hidden=true;}",
             " ",             " sync(s.config);",
              " const hv=s.hive||{};",

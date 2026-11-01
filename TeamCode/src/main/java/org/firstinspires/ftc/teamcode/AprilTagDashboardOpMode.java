@@ -48,6 +48,8 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
 
     private AprilTagConfig config;
     private AprilTagProcessor aprilTag;
+    /** Turns the portal's frames into JPEG for the dashboard's Live view. */
+    private MjpegFrameGrabber frameGrabber;
     private VisionPortal portal;
     /** Non-null while the Limelight is the source: polled directly, no VisionPortal. */
     private Limelight3A limelight;
@@ -100,6 +102,11 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
         } catch (IOException e) {
             lastError = "dashboard server failed: " + e;
             telemetry.addLine(lastError);
+        }
+        // The portal is built before the server exists, so the grabber learns where to send
+        // frames here, once there is somewhere to send them.
+        if (frameGrabber != null) {
+            frameGrabber.setServer(server);
         }
     }
 
@@ -242,6 +249,9 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
             server.close();
             server = null;
         }
+        if (frameGrabber != null) {
+            frameGrabber.setServer(null);
+        }
         if (portal != null) {
             portal.close();
             portal = null;
@@ -300,6 +310,10 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
     }
 
     protected void rebuildPortal() {
+        if (frameGrabber == null) {
+            frameGrabber = new MjpegFrameGrabber();
+        }
+        frameGrabber.setServer(server);
         if (portal != null) {
             try {
                 portal.close();
@@ -324,8 +338,12 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
                         AprilTagConfig.RES_W[config.resolution],
                         AprilTagConfig.RES_H[config.resolution]))
                 .enableLiveView(config.liveView)
+                // The grabber goes first so it encodes the untouched frame, not one the
+                // AprilTag processor has already converted in place.
+                .addProcessor(frameGrabber)
                 .addProcessor(aprilTag)
                 .build();
+
         lastResolution = config.resolution;
         lastCameraName = config.cameraName;
         lastLiveView = config.liveView;
@@ -678,6 +696,14 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
         return r.getPipelineIndex() + "/" + (type == null || type.isEmpty() ? "?" : type);
     }
 
+    /** {@return the path the page should show as video, or "" when this source has none}. */
+    private String streamUrl() {
+        if (config == null || config.isLimelight()) {
+            return "";
+        }
+        return "/stream.mjpg";
+    }
+
     private String buildStateJson() {
         StringBuilder sb = new StringBuilder(4096);
         sb.append('{');
@@ -692,6 +718,9 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
         AprilTagConfig.field(sb, "llPipe", llPipeText()).append(',');
         // Whatever last stopped a loop: shown on the dashboard so it can be read out loud.
         AprilTagConfig.field(sb, "error", lastError).append(',');
+        // Where the page fetches the video for the live source; same origin as the page, so
+        // the stream works over the robot's wifi and through adb reverse alike.
+        AprilTagConfig.field(sb, "streamUrl", streamUrl()).append(',');
 
         // Live camera control ranges so the dashboard sliders can adapt to the webcam.
         // Probed once when streaming starts to prevent saturating the USB bus on every frame.

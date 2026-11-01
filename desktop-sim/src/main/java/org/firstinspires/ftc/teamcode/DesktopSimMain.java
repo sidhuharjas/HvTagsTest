@@ -127,6 +127,9 @@ public class DesktopSimMain {
         AprilTagConfig.field(sb, "fps", 30.0, 1).append(',');
         AprilTagConfig.field(sb, "loopMs", loopMs, 1).append(',');
         AprilTagConfig.field(sb, "ip", "localhost").append(',');
+        // webcam_tags.py serves the annotated preview on its own port; on the robot the
+        // OpMode serves /stream.mjpg from its dashboard port instead.
+        AprilTagConfig.field(sb, "streamUrl", "http://localhost:8090/stream.mjpg").append(',');
         AprilTagConfig.field(sb, "expMinUs", 5000.0).append(',');
         AprilTagConfig.field(sb, "expMaxUs", 1000000.0).append(',');
         AprilTagConfig.field(sb, "gainMin", 0.0).append(',');
