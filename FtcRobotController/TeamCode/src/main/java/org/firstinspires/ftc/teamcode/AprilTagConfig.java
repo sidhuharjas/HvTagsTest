@@ -20,9 +20,8 @@ public class AprilTagConfig {
     public static final int GAIN_UNCHANGED = -1;
     public static final float DECIMATION_MIN = 1f;
     public static final float DECIMATION_MAX = 4f;
-    /** Same name as AprilTagProcessor.PoseSolver.APRILTAG_BUILTIN; kept as a literal so the
-     *  desktop simulator can compile this class without the FTC SDK. */
-    public static final String POSE_SOLVER_DEFAULT = "APRILTAG_BUILTIN";
+    /** Default pose solver: OPENCV_ITERATIVE is the stable, standard FTC pose solver. */
+    public static final String POSE_SOLVER_DEFAULT = "OPENCV_ITERATIVE";
 
     /** Vision source: a USB webcam through VisionPortal (SDK detection), or a Limelight 3A
      *  polled straight from the HardwareMap (the module does its own detection). */
@@ -64,7 +63,7 @@ public class AprilTagConfig {
     public volatile float minDecisionMargin = 0f;
     public volatile String poseSolver = POSE_SOLVER_DEFAULT;
     public volatile boolean showUnscorable = true;
-    public volatile boolean liveView = true;
+    public volatile boolean liveView = false;
 
     /** Pitch (deg) of the hive cell's tag cluster while it is upright - calibrate this. */
     public volatile double hiveBaselinePitchDeg = 0.0;

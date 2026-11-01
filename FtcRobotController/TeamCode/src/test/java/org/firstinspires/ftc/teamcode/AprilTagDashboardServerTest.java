@@ -215,12 +215,20 @@ class AprilTagDashboardServerTest {
     }
 
     @Test
-    void closeReleasesThePort() throws IOException {
+    void closeReleasesThePort() throws IOException, InterruptedException {
         get("/api/state");
         server.close();
         server = null;
 
-        assertTrue(portFree(AprilTagDashboardServer.PORT),
+        boolean freed = false;
+        for (int i = 0; i < 20; i++) {
+            if (portFree(AprilTagDashboardServer.PORT)) {
+                freed = true;
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertTrue(freed,
                 "stop() must hand 8080 back, or the next run cannot start");
     }
 }

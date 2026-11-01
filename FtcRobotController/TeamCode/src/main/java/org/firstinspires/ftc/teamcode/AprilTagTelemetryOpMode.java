@@ -35,10 +35,16 @@ public class AprilTagTelemetryOpMode extends OpMode {
 
     @Override
     public void init() {
-        aprilTag = AprilTagProcessor.easyCreateWithDefaults();
+        aprilTag = new AprilTagProcessor.Builder()
+                .setDrawAxes(false)
+                .setDrawCubeProjection(false)
+                .setDrawTagOutline(false)
+                .setDrawTagID(false)
+                .build();
         portal = new VisionPortal.Builder()
                 .setCamera(hardwareMap.get(WebcamName.class, CAM_NAME))
                 .setCameraResolution(new Size(640, 480))
+                .enableLiveView(false)
                 .addProcessor(aprilTag)
                 .build();
     }

@@ -71,6 +71,11 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
     private boolean pendingCameraApply = true;
     private long lastExposureApplied = Long.MIN_VALUE;
     private int lastGainApplied = Integer.MIN_VALUE;
+    private long cachedExpMin = 0;
+    private long cachedExpMax = 0;
+    private int cachedGainMin = 0;
+    private int cachedGainMax = 0;
+    private boolean cameraControlsProbed = false;
 
     @Override
     public void init() {
@@ -221,7 +226,8 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
             }
             lastLLResult = null;
             return aprilTag == null
-                    ? java.util.Collections.emptyList() : aprilTag.getDetections();
+                    ? java.util.Collections.emptyList()
+                    : new java.util.ArrayList<>(aprilTag.getDetections());
         } catch (Throwable e) {
             // Throwable: a tag library or bridge class missing from the running SDK surfaces as
             // an Error the first time a detection is actually read.
@@ -285,7 +291,12 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
      * still runs - and still reports - without a processor.
      */
     protected AprilTagProcessor createProcessor() {
-        return AprilTagProcessor.easyCreateWithDefaults();
+        return new AprilTagProcessor.Builder()
+                .setDrawAxes(false)
+                .setDrawCubeProjection(false)
+                .setDrawTagOutline(false)
+                .setDrawTagID(false)
+                .build();
     }
 
     protected void rebuildPortal() {
@@ -321,6 +332,7 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
         pendingCameraApply = true;
         lastExposureApplied = Long.MIN_VALUE;
         lastGainApplied = Integer.MIN_VALUE;
+        cameraControlsProbed = false;
     }
 
     /** Limelight half of the vision plumbing: the module detects for us, so no VisionPortal. */
@@ -554,9 +566,14 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
             aprilTag.setDecimation(Math.max(AprilTagConfig.DECIMATION_MIN,
                     Math.min(AprilTagConfig.DECIMATION_MAX, config.decimation)));
             try {
-                aprilTag.setPoseSolver(AprilTagProcessor.PoseSolver.valueOf(config.poseSolver));
-            } catch (IllegalArgumentException e) {
+                AprilTagProcessor.PoseSolver solver = AprilTagProcessor.PoseSolver.valueOf(config.poseSolver);
+                if (solver == AprilTagProcessor.PoseSolver.APRILTAG_BUILTIN) {
+                    solver = AprilTagProcessor.PoseSolver.OPENCV_ITERATIVE;
+                }
+                aprilTag.setPoseSolver(solver);
+            } catch (Exception e) {
                 lastError = "unknown pose solver: " + config.poseSolver;
+                aprilTag.setPoseSolver(AprilTagProcessor.PoseSolver.OPENCV_ITERATIVE);
             }
         }
 
@@ -677,16 +694,14 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
         AprilTagConfig.field(sb, "error", lastError).append(',');
 
         // Live camera control ranges so the dashboard sliders can adapt to the webcam.
-        // These are a convenience for the sliders: a webcam that will not answer must not
-        // cost the match, so each probe is guarded on its own.
-        long expMin = 0, expMax = 0;
-        int gainMin = 0, gainMax = 0;
-        if (portal != null && portal.getCameraState() == VisionPortal.CameraState.STREAMING) {
+        // Probed once when streaming starts to prevent saturating the USB bus on every frame.
+        if (!cameraControlsProbed && portal != null
+                && portal.getCameraState() == VisionPortal.CameraState.STREAMING) {
             try {
                 ExposureControl exposure = portal.getCameraControl(ExposureControl.class);
                 if (exposure != null && exposure.isExposureSupported()) {
-                    expMin = exposure.getMinExposure(TimeUnit.MICROSECONDS);
-                    expMax = exposure.getMaxExposure(TimeUnit.MICROSECONDS);
+                    cachedExpMin = exposure.getMinExposure(TimeUnit.MICROSECONDS);
+                    cachedExpMax = exposure.getMaxExposure(TimeUnit.MICROSECONDS);
                 }
             } catch (Exception ignored) {
                 // Sliders keep their defaults.
@@ -694,17 +709,18 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
             try {
                 GainControl gain = portal.getCameraControl(GainControl.class);
                 if (gain != null) {
-                    gainMin = gain.getMinGain();
-                    gainMax = gain.getMaxGain();
+                    cachedGainMin = gain.getMinGain();
+                    cachedGainMax = gain.getMaxGain();
                 }
             } catch (Exception ignored) {
                 // Sliders keep their defaults.
             }
+            cameraControlsProbed = true;
         }
-        AprilTagConfig.field(sb, "expMinUs", (double) expMin).append(',');
-        AprilTagConfig.field(sb, "expMaxUs", (double) expMax).append(',');
-        AprilTagConfig.field(sb, "gainMin", (double) gainMin).append(',');
-        AprilTagConfig.field(sb, "gainMax", (double) gainMax).append(',');
+        AprilTagConfig.field(sb, "expMinUs", (double) cachedExpMin).append(',');
+        AprilTagConfig.field(sb, "expMaxUs", (double) cachedExpMax).append(',');
+        AprilTagConfig.field(sb, "gainMin", (double) cachedGainMin).append(',');
+        AprilTagConfig.field(sb, "gainMax", (double) cachedGainMax).append(',');
 
         sb.append("\"config\":").append(config.toJson()).append(',');
 

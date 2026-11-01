@@ -406,8 +406,8 @@ public class AprilTagDashboardServer {
             "<div class=\"row\"><label>decimation <span class=\"val\" id=\"decVal\">1.0</span></label>",
             "<input type=\"range\" id=\"decimation\" min=\"1\" max=\"4\" step=\"0.5\" value=\"1\"></div>",
             "<div class=\"row\"><label>pose solver</label><select id=\"poseSolver\">",
-            "<option>APRILTAG_BUILTIN</option><option>OPENCV_SOLVEPNP_EPNP</option><option>OPENCV_IPPE</option>",
-            "<option>OPENCV_IPPE_SQUARE</option><option>OPENCV_ITERATIVE</option><option>OPENCV_SQPNP</option></select></div>",
+            "<option selected>OPENCV_ITERATIVE</option><option>OPENCV_IPPE_SQUARE</option><option>OPENCV_IPPE</option>",
+            "<option>OPENCV_SOLVEPNP_EPNP</option><option>OPENCV_SQPNP</option><option>APRILTAG_BUILTIN</option></select></div>",
             "</details>", // #detOnly: the whole box hides in Limelight mode - its settings are not ll settings
 
             "<details><summary>targeting</summary>",
@@ -479,8 +479,8 @@ public class AprilTagDashboardServer {
             "$('poseSolver').addEventListener('change',()=>post({poseSolver:$('poseSolver').value}));",
             "document.querySelectorAll('#alliance button').forEach(b=>b.addEventListener('click',()=>post({alliance:b.dataset.v})));",
             "$('resetBtn').addEventListener('click',()=>post({cameraName:'Webcam 1',resolution:0,decimation:1,exposureUs:-1,",
-             " gain:-1,tagSizeIn:5,fovDeg:65,alliance:'RED',maxRollDeg:90,minClusterPercent:0,minDecisionMargin:0,poseSolver:'APRILTAG_BUILTIN',",
-             " showUnscorable:true,liveView:true,cameraMode:'WEBCAM',limelightName:'limelight',",
+             " gain:-1,tagSizeIn:5,fovDeg:65,alliance:'RED',maxRollDeg:90,minClusterPercent:0,minDecisionMargin:0,poseSolver:'OPENCV_ITERATIVE',",
+             " showUnscorable:true,liveView:false,cameraMode:'WEBCAM',limelightName:'limelight',",
              " limelightHost:'',limelightPollHz:20,tagNames:'{}'}));",
             "$('copyBtn').addEventListener('click',()=>{navigator.clipboard&&navigator.clipboard.writeText($('raw').value);});",
             "function setUnfocused(el,fn){if(el&&document.activeElement!==el)fn(el);}",
