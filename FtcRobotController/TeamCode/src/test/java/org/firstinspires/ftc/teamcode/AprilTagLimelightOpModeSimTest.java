@@ -258,6 +258,9 @@ class AprilTagLimelightOpModeSimTest {
                 "the camera reads the Limelight, not a VisionPortal state: " + body[0]);
         assertTrue(body[0].contains("\"llIp\":\"sim\""),
                 "the state carries the device the dashboard links to: " + body[0]);
+        assertTrue(body[0].contains("\"streamUrl\":\"/stream.mjpg\""),
+                "the live view is offered in Limelight mode too, not just on the webcam: "
+                        + body[0]);
         assertTrue(body[0].contains("\"name\":\"R_HIVE\""),
                 "a fiducial arrived, named from tagNames: " + body[0]);
         assertTrue(body[0].contains("\"range\":64.9"),

@@ -1,15 +1,18 @@
 package org.firstinspires.ftc.teamcode;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
 import java.util.Locale;
@@ -64,6 +67,14 @@ public class AprilTagDashboardServer {
             new java.util.concurrent.atomic.AtomicInteger();
     private static final int MAX_STREAM_VIEWERS = 4;
 
+    /** An upstream MJPEG feed to republish as this server's live view, or "" for none: the
+     *  Limelight serves its own video on :5802, and the page still asks this port for it. */
+    private volatile String relayUrl = "";
+    /** Bumped on every {@link #relayUrl} change, so the relay drops the source it was left on. */
+    private volatile int relayGeneration;
+    /** The open upstream connection, so a source change can abandon it instead of waiting. */
+    private volatile HttpURLConnection relayConnection;
+
     public AprilTagDashboardServer(Backend backend) throws IOException {
         this.backend = backend;
         this.serverSocket = bind();
@@ -89,6 +100,14 @@ public class AprilTagDashboardServer {
                 }
             }
         });
+        Thread relay = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                relayLoop();
+            }
+        }, "dashboard-relay");
+        relay.setDaemon(true); // a stopped OpMode must not keep the JVM alive
+        relay.start();
     }
 
     /** The port the dashboard actually ended up on; not {@link #PORT} when 8080 was busy. */
@@ -122,6 +141,154 @@ public class AprilTagDashboardServer {
             latestJpegSeq++;
             frameLock.notifyAll();
         }
+    }
+
+    /**
+     * Points the live view at a camera that streams for itself - the Limelight's MJPEG feed on
+     * {@code http://<limelight>:5802/}. The browser keeps asking this port for
+     * {@code /stream.mjpg}, so the video arrives over the robot's wifi and through
+     * {@code adb reverse} alike, exactly as the webcam's does. {@code ""} turns it off.
+     *
+     * <p>The feed is only opened while a page is watching ({@link #wantsFrames()}), so an idle
+     * dashboard costs the camera no bandwidth.
+     */
+    public void setRelayUrl(String url) {
+        String next = url == null ? "" : url.trim();
+        if (next.equals(relayUrl)) {
+            return;
+        }
+        relayUrl = next;
+        relayGeneration++;
+        HttpURLConnection open = relayConnection;
+        if (open != null) {
+            open.disconnect(); // drop the old source now instead of after its read timeout
+        }
+    }
+
+    /** Connects to {@link #relayUrl} and republishes every frame it carries, retrying forever. */
+    private void relayLoop() {
+        while (running) {
+            String url = relayUrl;
+            int generation = relayGeneration;
+            if (url.isEmpty() || !wantsFrames()) {
+                if (!pause(250)) {
+                    return;
+                }
+                continue;
+            }
+            HttpURLConnection conn = null;
+            try {
+                conn = (HttpURLConnection) new URL(url).openConnection();
+                conn.setConnectTimeout(2000);
+                conn.setReadTimeout(5000);
+                conn.setRequestProperty("Connection", "close");
+                relayConnection = conn;
+                if (conn.getResponseCode() != 200) {
+                    if (!pause(2000)) {
+                        return;
+                    }
+                    continue;
+                }
+                try (InputStream in = new BufferedInputStream(conn.getInputStream(), 64 * 1024)) {
+                    while (running && generation == relayGeneration && wantsFrames()) {
+                        byte[] jpeg = readMjpegFrame(in);
+                        if (jpeg == null) {
+                            break; // the feed ended or lost framing: reconnect below
+                        }
+                        publishFrame(jpeg);
+                    }
+                }
+            } catch (Exception ignored) {
+                // Camera off, unplugged or still booting: the retry below is the whole answer.
+            } finally {
+                relayConnection = null;
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+            if (!pause(1000)) {
+                return;
+            }
+        }
+    }
+
+    /** {@return false once the dashboard is closing, so the relay can stop waiting}. */
+    private boolean pause(long ms) {
+        try {
+            Thread.sleep(ms);
+            return running;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /**
+     * One JPEG out of a multipart MJPEG response: the part's headers, then its bytes.
+     *
+     * <p>The Limelight labels every part with a Content-Length, which is read exactly. A feed
+     * that does not is framed on the JPEG's own markers instead. {@code null} means the feed
+     * ended, which the relay treats as a reason to reconnect.
+     */
+    private static byte[] readMjpegFrame(InputStream in) throws IOException {
+        int length = -1;
+        while (true) {
+            String line = readLine(in); // boundary, Content-Type, Content-Length, then blank
+            if (line == null) {
+                return null;
+            }
+            if (line.isEmpty()) {
+                break;
+            }
+            if (line.regionMatches(true, 0, "content-length:", 0, 15)) {
+                try {
+                    length = Integer.parseInt(line.substring(15).trim());
+                } catch (NumberFormatException e) {
+                    length = -1;
+                }
+            }
+        }
+        if (length <= 0) {
+            return readJpegByMarkers(in);
+        }
+        byte[] jpeg = new byte[length];
+        int off = 0;
+        while (off < length) {
+            int n = in.read(jpeg, off, length - off);
+            if (n < 0) {
+                return null;
+            }
+            off += n;
+        }
+        return jpeg;
+    }
+
+    /** Frames the next JPEG on its FF D8 / FF D9 markers, for feeds that send no lengths. */
+    private static byte[] readJpegByMarkers(InputStream in) throws IOException {
+        int prev = -1;
+        while (true) {
+            int b = in.read();
+            if (b < 0) {
+                return null;
+            }
+            if (prev == 0xFF && b == 0xD8) {
+                break;
+            }
+            prev = b;
+        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream(64 * 1024);
+        out.write(0xFF);
+        out.write(0xD8);
+        int prevTwo = -1;
+        int b;
+        while ((b = in.read()) >= 0) {
+            out.write(b);
+            if (prevTwo == 0xFF && b == 0xD9) {
+                return out.toByteArray();
+            }
+            prevTwo = b;
+        }
+        return null;
     }
 
     /** Binds the first free port, so a Control Hub - where the RC app already owns 8080 - still
@@ -289,6 +456,10 @@ public class AprilTagDashboardServer {
         try {
             serverSocket.close();
         } catch (IOException ignored) {
+        }
+        HttpURLConnection open = relayConnection;
+        if (open != null) {
+            open.disconnect();
         }
         pool.shutdownNow();
     }

@@ -28,7 +28,9 @@ Clone the repo, then open `FtcRobotController/` in Android Studio and let Gradle
 2. Run the **AprilTag Dashboard** OpMode.
 3. On the dashboard, set **source** to `LIMELIGHT`.
 
-Point the camera at tags. If your Limelight is not at `limelight.local`, type its host or IP in the **host** box and the page and the REST calls both follow it.
+Point the camera at tags. If your Limelight is not at `limelight.local`, type its host or IP in the **host** box and the page, the REST calls and the video all follow it.
+
+The dashboard's **Live view** shows the camera while you tune: the OpMode relays the Limelight's own MJPEG feed (port 5802) through `/stream.mjpg`, so the picture is on the same page as the numbers and works over wifi or `adb reverse`. The camera's own page on :5801 is still there for exposure, LED and the pipeline overlay.
 
 Set your tag size once: drag the **tag size** slider, then press **push tag size to Limelight**. The dashboard shows the active pipeline and what the camera answered, for example `pipeline 0: tagSize 152.4 mm - uploaded`. If the pipeline file has no size key the camera understands, nothing is written and the message says what it found instead.
 
@@ -82,7 +84,7 @@ Print a tag or hold a phone screen with one up to the lens. Detection runs in `w
 
 The page polls 10 times a second. If a row looks stale, the footer of the page shows the loop time and detection count.
 
-The **Live view** card is the webcam itself, served as MJPEG by the OpMode on the dashboard's own port (`/stream.mjpg`), so it works over the robot's wifi and through `adb reverse` alike. Each detected tag is boxed and labelled with its id and range right on the picture. It encodes at most ~30 frames a second, and only while a page is watching. In Limelight mode the card is hidden - that camera has its own preview and settings page on :5801.
+The **Live view** card is the live camera, served as MJPEG by the OpMode on the dashboard's own port (`/stream.mjpg`), so it works over the robot's wifi and through `adb reverse` alike. With the USB webcam, each detected tag is boxed and labelled with its id and range right on the picture; it encodes at most ~30 frames a second, and only while a page is watching. In Limelight mode the same card shows the Limelight: the OpMode relays the camera's own feed from port 5802 and the robot leaves the frames untouched, so what you see is what the camera detects on - the pipeline overlay lives on :5801.
 
 ## Tests
 
@@ -91,7 +93,7 @@ cd FtcRobotController
 .\gradlew.bat :TeamCode:testDebugUnitTest
 ```
 
-56 tests, no robot needed: config clamping and the JSON round trip, the dashboard's HTTP server and live view stream, both camera sources driven through SimLoop with fake hardware, the tag library that keeps every tag of a hive cell separate, and the tag-size patcher against realistic pipeline files.
+57 tests, no robot needed: config clamping and the JSON round trip, the dashboard's HTTP server and live view stream, both camera sources driven through SimLoop with fake hardware, the tag library that keeps every tag of a hive cell separate, and the tag-size patcher against realistic pipeline files.
 
 ## Project layout
 
@@ -112,6 +114,7 @@ To use it in your own robot project, copy the seven `.java` files from either `T
 | 8081 | Detections posted by `webcam_tags.py` |
 | 8090 | MJPEG preview from the simulator's webcam script (the robot has no extra port: its live view is `/stream.mjpg` on the dashboard's port) |
 | 5801 | The Limelight's own web page, linked from the dashboard |
+| 5802 | The Limelight's own MJPEG feed, relayed to the dashboard's Live view |
 | 5807 | The Limelight's REST API, used by push tag size |
 
 Only one process can own a port, so stop the desktop simulator before running the tests.
@@ -122,7 +125,7 @@ Only one process can own a port, so stop the desktop simulator before running th
 - **`no scorable target`** - the target card says why: it names the closest tag and the rule that rejected it (alliance, roll, cluster %, decision margin). Set `alliance` to `ANY` to see everything.
 - **`BindException: Address already in use`** - every port the dashboard tries is busy. On a Control Hub 8080 is OnBot Java and that is expected, so the OpMode simply takes 8082; trust the telemetry line for the real URL. If it reports that no port was free, close whatever holds 8080-8089.
 - **`camera 'Webcam 1' not found`** - the Driver Station camera name is different. Type the right name on the dashboard.
-- **Live view says `camera stream not ready yet - retrying`** - the camera is not streaming yet; check the `cam` chip (`STARTING`, `CLOSED`). The page retries every 5 seconds and starts showing video once frames arrive. In Limelight mode there is no video here by design - use the Limelight's own page.
+- **Live view says `camera stream not ready yet - retrying`** - the camera is not streaming yet; check the `cam` chip (`STARTING`, `CLOSED`). The page retries every 5 seconds and starts showing video once frames arrive. In Limelight mode the frames come from the camera's own :5802 feed, so a video that never appears means the robot cannot reach the Limelight - compare with the `cam` chip (`LIMELIGHT:OFFLINE`) and the **host** box.
 - **The OpMode stopped the moment a tag came into view** - an old bug: a detection the SDK could not localise carries no pose, and the state builder read it anyway. A poseless tag is now served with `"hasPose":false` and shows `no pose` in the Detections table. Update `AprilTagDashboardOpMode.java` if you still see it.
 - **The OpMode ends on its own, whatever the cause** - as of this version a loop exception cannot end the run: the OpMode keeps ticking and the `OpMode error` card at the top of the page prints the exception. Paste that text into an issue.
 - **Limelight shows nothing** - check the device name matches the Driver Station, and that the Limelight is on a pipeline with tags (`pipe_fiducial`). The dashboard prints the pipeline it is actually running.

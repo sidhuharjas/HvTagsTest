@@ -280,6 +280,75 @@ class AprilTagDashboardServerTest {
         }
     }
 
+    /**
+     * The Limelight streams for itself on :5802. Asked to relay such a feed, the dashboard has to
+     * serve its frames on the same {@code /stream.mjpg} the webcam uses: the page keeps one URL,
+     * and the video keeps working over the robot's wifi and through {@code adb reverse} alike.
+     */
+    @Test
+    void liveViewRelaysACamerasOwnMjpegFeed() throws Exception {
+        byte[] first = {(byte) 0xFF, (byte) 0xD8, 1, 2, 3, (byte) 0xFF, (byte) 0xD9};
+        byte[] second = {(byte) 0xFF, (byte) 0xD8, 4, 5, (byte) 0xFF, (byte) 0xD9};
+        byte[][] frames = {first, second};
+
+        try (ServerSocket upstream = new ServerSocket(0)) {
+            Thread camera = new Thread(() -> {
+                try (Socket s = upstream.accept()) {
+                    readHeaders(s.getInputStream()); // the relay's request
+                    OutputStream out = s.getOutputStream();
+                    out.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace;"
+                            + " boundary=boundarydonotcross\r\n\r\n")
+                            .getBytes(StandardCharsets.US_ASCII));
+                    for (byte[] frame : frames) {
+                        out.write(("--boundarydonotcross\r\nContent-Type: image/jpeg\r\n"
+                                + "Content-Length: " + frame.length + "\r\n\r\n")
+                                .getBytes(StandardCharsets.US_ASCII));
+                        out.write(frame);
+                        out.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+                        out.flush();
+                    }
+                    Thread.sleep(3000); // hold the feed open while the test reads a frame
+                } catch (Exception ignored) {
+                    // the server closed first: the test is over
+                }
+            }, "fake-limelight");
+            camera.setDaemon(true);
+            camera.start();
+
+            server.setRelayUrl("http://127.0.0.1:" + upstream.getLocalPort() + "/stream.mjpg");
+
+            byte[] received = null;
+            long deadline = System.currentTimeMillis() + 5000;
+            while (received == null && System.currentTimeMillis() < deadline) {
+                try (Socket socket = new Socket("127.0.0.1", AprilTagDashboardServer.PORT)) {
+                    socket.setSoTimeout(2000);
+                    OutputStream out = socket.getOutputStream();
+                    out.write("GET /stream.mjpg HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+                            .getBytes(StandardCharsets.US_ASCII));
+                    out.flush();
+                    InputStream in = socket.getInputStream();
+                    if (readHeaders(in).startsWith("HTTP/1.1 200")) {
+                        String part = readHeaders(in);
+                        int length = Integer.parseInt(
+                                part.replaceAll("(?s).*Content-Length: (\\d+).*", "$1"));
+                        received = readExact(in, length);
+                    }
+                } catch (IOException e) {
+                    // Nothing relayed yet: the page's retry, in miniature.
+                }
+                if (received == null) {
+                    Thread.sleep(200);
+                }
+            }
+
+            assertNotNull(received, "no frame was relayed from the camera's own stream");
+            assertTrue(java.util.Arrays.equals(received, first)
+                            || java.util.Arrays.equals(received, second),
+                    "the browser receives a frame the camera sent, byte for byte");
+            assertTrue(server.wantsFrames(), "the fresh request must keep the relay connected");
+        }
+    }
+
     @Test
     void closeReleasesThePort() throws IOException, InterruptedException {
         get("/api/state");

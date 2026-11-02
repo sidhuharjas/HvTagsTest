@@ -190,6 +190,10 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
             pendingCameraApply = false;
         }
 
+        // The Limelight streams for itself rather than through a VisionPortal, so the
+        // dashboard's live view has to be pointed at the camera while it is the source.
+        updateStreamRelay();
+
         latestDetections = fetchDetections();
         if (frameGrabber != null) {
             frameGrabber.setDetections(latestDetections); // the Live view boxes every tag
@@ -748,12 +752,41 @@ public class AprilTagDashboardOpMode extends OpMode implements AprilTagDashboard
         return r.getPipelineIndex() + "/" + (type == null || type.isEmpty() ? "?" : type);
     }
 
-    /** {@return the path the page should show as video, or "" when this source has none}. */
+    /** {@return the path the page asks this server for video, whichever source is live}. */
     private String streamUrl() {
-        if (config == null || config.isLimelight()) {
+        return "/stream.mjpg";
+    }
+
+    /**
+     * The Limelight's own video: an MJPEG feed on :5802, the port it exposes for external
+     * viewers (GRIP and the like), with no pipeline overlay drawn on it.
+     *
+     * <p>Derived from the address the REST calls already resolved, so a host typed on the
+     * dashboard moves the video with it; "" when there is no address to derive one from.
+     */
+    protected String llStreamUrl() {
+        String rest = llRestBase(); // http://<host>:5807
+        if (rest == null) {
             return "";
         }
-        return "/stream.mjpg";
+        int scheme = rest.indexOf("//");
+        int port = rest.lastIndexOf(':');
+        if (port <= scheme) {
+            return "";
+        }
+        return rest.substring(0, port) + ":5802/";
+    }
+
+    /**
+     * Keeps the dashboard's live view pointed at whichever camera is live. The webcam's frames
+     * are published by {@link MjpegFrameGrabber}; the Limelight's have to be pulled from the
+     * camera, which the server does - once, and only while a page is watching.
+     */
+    private void updateStreamRelay() {
+        if (server == null) {
+            return;
+        }
+        server.setRelayUrl(config != null && config.isLimelight() ? llStreamUrl() : "");
     }
 
     private String buildStateJson() {
